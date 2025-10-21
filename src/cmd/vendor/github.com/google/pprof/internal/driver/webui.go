@@ -39,24 +39,34 @@ import (
 
 // webInterface holds the state needed for serving a browser based interface.
 type webInterface struct {
-	prof         *profile.Profile
-	copier       profileCopier
-	options      *plugin.Options
-	help         map[string]string
-	settingsFile string
+	prof            *profile.Profile
+	copier          profileCopier
+	options         *plugin.Options
+	help            map[string]string
+	settingsFile    string
+	baseProfile     string
+	sourceProfile   string
+	fileBrowserPath string
+	selectedDir     string
+	expandedDirs    map[string]bool
+	lastScanTime    map[string]int64 // path -> timestamp
 }
 
-func makeWebInterface(p *profile.Profile, copier profileCopier, opt *plugin.Options) (*webInterface, error) {
+func makeWebInterface(p *profile.Profile, copier profileCopier, opt *plugin.Options, fileBrowserPath string) (*webInterface, error) {
 	settingsFile, err := settingsFileName()
 	if err != nil {
 		return nil, err
 	}
 	return &webInterface{
-		prof:         p,
-		copier:       copier,
-		options:      opt,
-		help:         make(map[string]string),
-		settingsFile: settingsFile,
+		prof:            p,
+		copier:          copier,
+		options:         opt,
+		help:            make(map[string]string),
+		settingsFile:    settingsFile,
+		fileBrowserPath: fileBrowserPath,
+		selectedDir:     fileBrowserPath,
+		expandedDirs:    make(map[string]bool),
+		lastScanTime:    make(map[string]int64),
 	}, nil
 }
 
@@ -95,17 +105,24 @@ type webArgs struct {
 	UnitDefs    []measurement.UnitType
 }
 
-func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, disableBrowser bool) error {
+func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, disableBrowser bool, fileBrowserPath string) error {
 	host, port, err := getHostAndPort(hostport)
 	if err != nil {
 		return err
 	}
 	interactiveMode = true
+	// p may be nil when launching file browser without a profile. Use an empty
+	// profile to keep the web UI operational (e.g., File Browser view).
+	if p == nil {
+		p = &profile.Profile{}
+	}
 	copier := makeProfileCopier(p)
-	ui, err := makeWebInterface(p, copier, o)
+	ui, err := makeWebInterface(p, copier, o, fileBrowserPath)
 	if err != nil {
 		return err
 	}
+	ui.options = o
+
 	for n, c := range pprofCommands {
 		ui.help[n] = c.description
 	}
@@ -125,16 +142,25 @@ func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, d
 		Host:     host,
 		Port:     port,
 		Handlers: map[string]http.Handler{
-			"/":              http.HandlerFunc(ui.dot),
-			"/top":           http.HandlerFunc(ui.top),
-			"/disasm":        http.HandlerFunc(ui.disasm),
-			"/source":        http.HandlerFunc(ui.source),
-			"/peek":          http.HandlerFunc(ui.peek),
-			"/flamegraph":    http.HandlerFunc(ui.stackView),
-			"/flamegraph2":   redirectWithQuery("flamegraph", http.StatusMovedPermanently), // Keep legacy URL working.
-			"/flamegraphold": redirectWithQuery("flamegraph", http.StatusMovedPermanently), // Keep legacy URL working.
-			"/saveconfig":    http.HandlerFunc(ui.saveConfig),
-			"/deleteconfig":  http.HandlerFunc(ui.deleteConfig),
+			"/":                http.HandlerFunc(ui.dot),
+			"/top":             http.HandlerFunc(ui.top),
+			"/disasm":          http.HandlerFunc(ui.disasm),
+			"/source":          http.HandlerFunc(ui.source),
+			"/peek":            http.HandlerFunc(ui.peek),
+			"/flamegraph":      http.HandlerFunc(ui.stackView),
+			"/flamegraph2":     redirectWithQuery("flamegraph", http.StatusMovedPermanently), // Keep legacy URL working.
+			"/flamegraphold":   redirectWithQuery("flamegraph", http.StatusMovedPermanently), // Keep legacy URL working.
+			"/saveconfig":      http.HandlerFunc(ui.saveConfig),
+			"/deleteconfig":    http.HandlerFunc(ui.deleteConfig),
+			"/filebrowser":     http.HandlerFunc(ui.fileBrowser),
+			"/api/files":       http.HandlerFunc(ui.apiFiles),
+			"/api/setbase":     http.HandlerFunc(ui.apiSetBase),
+			"/api/setsource":   http.HandlerFunc(ui.apiSetSource),
+			"/api/reset":       http.HandlerFunc(ui.apiReset),
+			"/api/work":        http.HandlerFunc(ui.apiWork),
+			"/api/setdir":      http.HandlerFunc(ui.apiSetDirectory),
+			"/api/setexpanded": http.HandlerFunc(ui.apiSetExpanded),
+			"/api/getstate":    http.HandlerFunc(ui.apiGetState),
 			"/download": http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				w.Header().Set("Content-Type", "application/vnd.google.protobuf+gzip")
 				w.Header().Set("Content-Disposition", "attachment;filename=profile.pb.gz")
@@ -209,7 +235,8 @@ func defaultWebServer(args *plugin.HTTPServerArgs) error {
 	// https://github.com/google/pprof/pull/348
 	mux := http.NewServeMux()
 	mux.Handle("/ui/", http.StripPrefix("/ui", handler))
-	mux.Handle("/", redirectWithQuery("/ui", http.StatusTemporaryRedirect))
+	// Default to the File Browser view
+	mux.Handle("/", redirectWithQuery("/ui/filebrowser", http.StatusTemporaryRedirect))
 	s := &http.Server{Handler: mux}
 	return s.Serve(ln)
 }
@@ -233,6 +260,8 @@ func isLocalhost(host string) bool {
 func openBrowser(url string, o *plugin.Options) {
 	// Construct URL.
 	baseURL, _ := gourl.Parse(url)
+	// Default to File Browser view
+	baseURL.Path = "/ui/filebrowser"
 	current := currentConfig()
 	u, _ := current.makeURL(*baseURL)
 
@@ -285,8 +314,10 @@ func renderHTML(dst io.Writer, tmpl string, rpt *report.Report, errList, legend 
 	profile := getFromLegend(legend, "Type: ", "unknown")
 	data.Title = file + " " + profile
 	data.Errors = errList
-	data.Total = rpt.Total()
-	data.DocURL = rpt.DocURL()
+	if rpt != nil {
+		data.Total = rpt.Total()
+		data.DocURL = rpt.DocURL()
+	}
 	data.Legend = legend
 	return getHTMLTemplates().ExecuteTemplate(dst, tmpl, data)
 }
@@ -476,3 +507,34 @@ func getFromLegend(legend []string, param, def string) string {
 	}
 	return def
 }
+
+// file browser types moved to filebrowser.go
+
+// fileBrowser serves the file browser page
+// fileBrowser handler moved to filebrowser.go
+
+// apiFiles returns immediate children of a directory: all subdirs and any .pprof files
+// apiFiles moved to filebrowser.go
+
+// caching and scanning helpers moved to filebrowser.go
+
+// scanDir moved to filebrowser.go
+
+// scanDirFull returns a recursive tree of directories that contain at least
+// one .pprof descendant and includes all .pprof files under them.
+// scanDirFull moved to filebrowser.go
+
+// hasPprofBelowLimited quickly checks if a directory likely contains a .pprof file
+// by scanning up to maxDepth levels and up to maxEntries entries in total.
+// hasPprofBelowLimited moved to filebrowser.go
+
+// listWindowsDrives lists existing drives and filters to those that contain any .pprof
+// listWindowsDrives moved to filebrowser.go
+
+// apiSetBase moved to filebrowser.go
+
+// apiSetSource moved to filebrowser.go
+
+// apiReset moved to filebrowser.go
+
+// apiWork moved to filebrowser.go

@@ -27,11 +27,17 @@ import (
 	"github.com/google/pprof/profile"
 )
 
+type PProfServerParam = internaldriver.PProfServerParam
+
 // PProf acquires a profile, and symbolizes it using a profile
 // manager. Then it generates a report formatted according to the
 // options selected through the flags package.
 func PProf(o *Options) error {
 	return internaldriver.PProf(o.internalOptions())
+}
+
+func PProfServer(p *internaldriver.PProfServerParam, o *Options) error {
+	return internaldriver.PProfServer(p, o.internalOptions())
 }
 
 func (o *Options) internalOptions() *plugin.Options {

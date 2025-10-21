@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}}</title>
+  {{template "css" .}}
+  {{template "filebrowser_css"}}
+</head>
+<body>
+  {{template "header" .}}
+  <div class="fb-container" id="bodycontainer" tabindex="0">
+    <div class="fb-toolbar">
+      <div class="fb-profile-section">
+        <div class="fb-profile-row">
+          <div class="fb-tab empty" id="fb-tab-base">
+            <span class="label">Base</span>
+            <span class="value" id="fb-base">Not selected</span>
+          </div>
+        </div>
+        <div class="fb-profile-row">
+          <div class="fb-tab empty" id="fb-tab-source">
+            <span class="label">Source</span>
+            <span class="value" id="fb-source">Not selected</span>
+          </div>
+        </div>
+      </div>
+      <div class="fb-actions">
+        <button id="fb-select-dir" class="btn btn-primary">Select Directory</button>
+        <button id="fb-reset" class="btn btn-secondary">Reset</button>
+        <button id="fb-work" class="btn btn-success" disabled>Work</button>
+      </div>
+    </div>
+    <div class="fb-path"><span id="fb-path">/</span></div>
+    <div class="fb-tree" id="fb-tree"></div>
+  </div>
+  {{template "script" .}}
+  {{template "filebrowser_js"}}
+  <script>
+    fbInit({ base: '', source: '' });
+  </script>
+</body>
+</html>
+

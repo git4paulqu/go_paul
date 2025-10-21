@@ -31,6 +31,12 @@ import (
 	"github.com/google/pprof/profile"
 )
 
+type PProfServerParam struct {
+	FileBrowserPath    string
+	HTTPHostport       string
+	HTTPDisableBrowser bool
+}
+
 // PProf acquires a profile, and symbolizes it using a profile
 // manager. Then it generates a report formatted according to the
 // options selected through the flags package.
@@ -55,9 +61,20 @@ func PProf(eo *plugin.Options) error {
 	}
 
 	if src.HTTPHostport != "" {
-		return serveWebInterface(src.HTTPHostport, p, o, src.HTTPDisableBrowser)
+		return serveWebInterface(src.HTTPHostport, p, o, src.HTTPDisableBrowser, "")
 	}
 	return interactive(p, o)
+}
+
+func PProfServer(param *PProfServerParam, eo *plugin.Options) error {
+	defer cleanupTempFiles()
+
+	o := setDefaults(eo)
+
+	if param.HTTPHostport != "" {
+		return serveWebInterface(param.HTTPHostport, nil, o, param.HTTPDisableBrowser, param.FileBrowserPath)
+	}
+	return nil
 }
 
 // generateRawReport is allowed to modify p.

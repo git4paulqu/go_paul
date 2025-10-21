@@ -78,6 +78,9 @@ func addTemplates(templates *template.Template) {
 	def("top", loadFile("html/top.html"))
 	def("sourcelisting", loadFile("html/source.html"))
 	def("plaintext", loadFile("html/plaintext.html"))
+	def("filebrowser", loadFile("html/filebrowser.html"))
+	def("filebrowser_css", loadCSS("html/filebrowser.css"))
+	def("filebrowser_js", loadJS("html/filebrowser.js"))
 	// TODO: Rename "stacks" to "flamegraph" to seal moving off d3 flamegraph.
 	def("stacks", loadFile("html/stacks.html"))
 	def("stacks_css", loadCSS("html/stacks.css"))
